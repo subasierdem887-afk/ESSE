@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101827"><title>ESSE 6.1 — Sohbet</title><style>
+:root{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f8fafc;background:#0b1120}*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:radial-gradient(ellipse at 30% 10%,#273858 0%,#0b1120 62%)}.phone{width:min(100%,460px);height:min(850px,100dvh);display:flex;flex-direction:column;background:#101827;box-shadow:0 24px 70px #0008;overflow:hidden}@media(min-width:550px){.phone{border:1px solid #334155;border-radius:28px}}header{padding:18px 16px;background:#1d293b;display:flex;align-items:center;gap:12px}.avatar{height:44px;width:44px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(135deg,#526a92,#805d9e);font-size:22px}.who{flex:1}.who strong{display:block;font-size:15px}.status{font-size:12px;color:#86efac;margin-top:4px}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#4ade80;margin-right:5px}.messages{flex:1;overflow:auto;padding:22px 15px;display:flex;flex-direction:column;gap:12px;scroll-behavior:smooth}.bubble{max-width:86%;border-radius:17px;padding:11px 14px;line-height:1.48;font-size:15px;white-space:pre-wrap;animation:pop .25s ease both}.bot{align-self:flex-start;background:#334155;border-bottom-left-radius:4px}.mine{align-self:flex-end;background:#155e75;border-bottom-right-radius:4px}.time{font-size:10px;color:#cbd5e1;text-align:right;margin-top:5px}.typing{display:none;align-self:flex-start;background:#334155;padding:12px 17px;border-radius:16px;color:#cbd5e1;font-size:13px}.typing.show{display:block}.typing span{display:inline-block;animation:bounce 1s infinite}.typing span:nth-child(2){animation-delay:.16s}.typing span:nth-child(3){animation-delay:.32s}form{display:flex;gap:9px;padding:12px 12px max(12px,env(safe-area-inset-bottom));background:#1d293b}input{flex:1;min-width:0;background:#334155;color:white;border:1px solid #475569;border-radius:25px;padding:13px 15px;font:inherit;outline:none}input:focus{border-color:#67e8f9}button{border:0;border-radius:50%;height:46px;width:46px;background:#0891b2;color:white;font-size:19px;cursor:pointer}button:disabled{opacity:.45;cursor:default}.final{align-self:stretch;background:linear-gradient(145deg,#4c1d56,#202c56);border:1px solid #a78bfa55;padding:24px 20px;border-radius:20px;text-align:center;animation:pop .6s ease}.heart{font-size:48px;animation:pulse 1.6s infinite}.final h2{font-size:23px;margin:12px 0}.final p{color:#f5d0fe;line-height:1.6}.again{width:auto;height:auto;border-radius:18px;padding:11px 17px;font-size:14px;background:#7c3aed;margin-top:8px}@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}@keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}@keyframes pulse{50%{transform:scale(1.12)}}
+.choicebar{display:flex;gap:7px;flex-wrap:wrap;padding:8px 12px;background:#101827}.choicebar button{width:auto;height:auto;border:1px solid #67517c;border-radius:20px;background:#302440;padding:8px 12px;font-size:12px}.subtle{font-size:11px;color:#94a3b8;text-align:center;padding:5px}.final{background:linear-gradient(145deg,#651d38,#27204e)}.heart{filter:drop-shadow(0 0 12px #fb7185)}
+</style></head><body><main class="phone"><header><div class="avatar">🖤</div><div class="who"><strong>ESSE</strong><div class="status"><i class="dot"></i><span id="status">çevrimiçi</span></div></div><span style="font-size:22px">⋮</span></header><section id="messages" class="messages" aria-live="polite"></section><div class="typing" id="typing">yazıyor<span>.</span><span>.</span><span>.</span></div><div class="choicebar" id="choices"></div><form id="form"><input id="input" autocomplete="off" maxlength="280" placeholder="ESSE’ye mesaj yaz..." aria-label="Mesajın"><button id="send" type="submit" aria-label="Gönder">➤</button></form></main><script>
+'use strict';
+const $=id=>document.getElementById(id),area=$('messages'),form=$('form'),input=$('input'),send=$('send'),typing=$('typing'),status=$('status');
+const KEY='esse_v6_sena',fresh=()=>({history:[],topic:'',pending:'',turn:0,hints:0,seen:{},facts:{},game:null,closed:false,revealed:false,lastBot:'',lastIntent:'',unknown:0});
+// Sohbet yalnızca açık sayfanın belleğinde tutulur; kalıcı kayıt yapılmaz.
+let S=fresh();
+try{localStorage.removeItem(KEY)}catch{}
+const save=()=>{};
+// Sayfadan ayrılınca geçmiş ve konuşmada öğrenilen bilgiler silinir.
+window.addEventListener('pagehide',()=>{S=fresh();area.replaceChildren();});
+const norm=s=>String(s).toLocaleLowerCase('tr-TR').replace(/ı/g,'i').replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s').replace(/ö/g,'o').replace(/ç/g,'c').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ?!]/g,' ').replace(/\s+/g,' ').trim();
+const has=(t,re)=>re.test(t),pick=(key,arr)=>{let n=S.seen[key]||0;S.seen[key]=n+1;let v=arr[n%arr.length];if(v===S.lastBot&&arr.length>1)v=arr[(n+1)%arr.length];return v};
+const now=()=>new Date(),fmtDate=d=>d.toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric',weekday:'long'}),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function add(text,who='bot',time=null){const b=document.createElement('div');b.className='bubble '+(who==='user'?'mine':'bot');const t=document.createElement('div');t.textContent=text;const stamp=document.createElement('div');stamp.className='time';stamp.textContent=time||now().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});b.append(t,stamp);area.append(b);area.scrollTop=area.scrollHeight}
+function remember(who,text){S.history.push({who,text,time:now().toISOString()});S.history=S.history.slice(-90);save()}
+async function say(text){send.disabled=true;input.disabled=true;status.textContent='yazıyor...';typing.classList.add('show');await sleep(Math.min(1700,450+text.length*13));typing.classList.remove('show');status.textContent='çevrimiçi';add(text);remember('bot',text);S.lastBot=text;send.disabled=false;input.disabled=false;input.focus()}
+function birthday(){let d=now(),start=new Date(d.getFullYear(),d.getMonth(),d.getDate()),b=new Date(d.getFullYear(),11,24);if(b<start)b.setFullYear(b.getFullYear()+1);let days=Math.round((b-start)/86400000);return days===0?'Bugün 24 Aralık! İyi ki doğdun Sena! 🎂🌹':`24 Aralık'a ${days} gün kaldı. 🎂`}
+function clock(t){let d=now();if(has(t,/\byarin\b/))d.setDate(d.getDate()+1);else if(has(t,/\bdun\b/))d.setDate(d.getDate()-1);if(has(t,/saat kac|saat kactir/))return `Telefonunun saatine göre şu an ${d.toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'})}. ⏰`;return `Telefonunun tarihine göre ${fmtDate(d)}. 📅`}
+function topic(name,pending){S.topic=name;S.pending=pending||''}
+
+// The Vampire Diaries offline encyclopedia. No network requests or API keys.
+const TVD={
+ aliases:/vampire diaries|vampir gunlukleri|vampire daires|wampire daires|tvd|mystic falls|salvatore|elena|damon|stefan|katherine|katerina|klaus|niklaus|bonnie|caroline|enzo|alaric|jeremy|matt donovan|tyler lockwood|elijah|rebekah|kol mikaelson|kai parker|silas|qetsiyah|tessa|amara|nadia petrova|lexi|rose|anna|pearl|jenna|isobel|john gilbert|liz forbes|jo laughlin|liv parker|lily salvatore|heretic|siphoner|traveler|gezginler|doppelganger|ikiz ruh|originals|orijinaller|kurucu aile|cure|tedavi|ripper|avci besli|besli|other side|diger taraf|gemini|cadilar|vampir|hibrit|kurt adam|heretics|cadilar meclisi/,
+ entries:[
+ {keys:/damon/,name:'Damon Salvatore',season:1,short:'Damon, Stefan’ın ağabeyi. Başta tehlikeli ve alaycı bir vampirken zamanla Elena’ya duyduğu sevgi ve arkadaşlıkları sayesinde daha karmaşık birine dönüşüyor.',more:'1864’te Katherine Pierce yüzünden vampirliğe sürüklenen iki kardeşten biri. En yakın dostlarından biri Bonnie; Enzo ile de yakınlığı var. Elena’yla ilişkisi dizinin merkezindeki hikâyelerden.'},
+ {keys:/stefan/,name:'Stefan Salvatore',season:1,short:'Stefan, Damon’ın küçük kardeşi. İnsan kanıyla ilgili kontrol sorunu nedeniyle “Ripper” geçmişi var; kendini sürekli dizginlemeye çalışıyor.',more:'Elena’yla ilk büyük aşk hikâyesini yaşıyor. Klaus’la geçmişi, Caroline’la ilişkisi ve kardeşini koruma isteği önemli çatışmaları.'},
+ {keys:/elena/,name:'Elena Gilbert',season:1,short:'Elena, Mystic Falls’ta yaşayan ve Salvatore kardeşlerin hayatına giren genç kadın. Katherine’e benzemesi doğaüstü olayların önemli bir anahtarı.',more:'Başta insan; ailesinin geçmişi, Petrova doppelgänger soyu, Stefan ve Damon’la ilişkileri hikâyenin merkezinde.'},
+ {keys:/katherine|katerina/,name:'Katherine Pierce',season:1,short:'Katherine’in asıl adı Katerina Petrova. Elena’nın doppelgänger’ı; hayatta kalmak için manipülasyona başvuran, çok eski bir vampir.',more:'1492’de Bulgaristan’dan kaçışı, Klaus’tan saklanması ve 1864’te Salvatore kardeşlerle yaşadıkları hikâyeyi şekillendiriyor.'},
+ {keys:/bonnie/,name:'Bonnie Bennett',season:1,short:'Bonnie, Bennett cadı soyundan gelen Elena’nın yakın arkadaşı. Büyü, fedakârlık ve dostluk hikâyesinin merkezinde.',more:'Öteki Taraf, Expression büyüsü, Kai ile hapishane dünyası ve Enzo’yla ilişkisi onun önemli hikâye çizgileri.'},
+ {keys:/caroline/,name:'Caroline Forbes',season:1,short:'Caroline, Liz Forbes’un kızı ve Elena ile Bonnie’nin arkadaşı. Vampir olduktan sonra kontrol ve özgüven konusunda büyük gelişim gösteriyor.',more:'Tyler, Klaus ve Stefan’la ilişkileri; annesi Liz’in hikâyesi ve arkadaşlarına bağlılığı önemli.'},
+ {keys:/klaus|niklaus/,name:'Niklaus Mikaelson',season:2,short:'Klaus, Original ailesinden bir vampir-kurt adam hibriti. Kendi ailesiyle karmaşık ilişkileri ve hibrit yaratma hedefi var.',more:'Kurt adam tarafının açılması için doppelgänger kanı ve ritüeller önemlidir. Kardeşleri Elijah ve Rebekah’la çatışır; Caroline’a özel ilgi duyar.'},
+ {keys:/elijah/,name:'Elijah Mikaelson',season:2,short:'Elijah, Original kardeşlerden biri; takım elbisesi, verdiği söze bağlılığı ve aileyi bir arada tutma çabasıyla tanınır.',more:'“Always and Forever” Mikaelson ailesinin ortak ilkesidir; Elijah çoğu zaman Klaus’u dengelemeye çalışır.'},
+ {keys:/rebekah/,name:'Rebekah Mikaelson',season:3,short:'Rebekah, Original vampirlerden biridir. En büyük arzularından biri sıradan bir insan hayatı ve gerçek sevgi yaşamaktır.',more:'Klaus’la kardeşlik çatışmaları, Marcel’le geçmişi ve insan olma isteği öne çıkar.'},
+ {keys:/kol/,name:'Kol Mikaelson',season:3,short:'Kol, Mikaelson kardeşlerinden bir Original vampirdir; dürtüsel ve tehlikeli tavrıyla bilinir.',more:'Orijinallerin soy bağı nedeniyle bir Original’ın ölümü kendi vampir soyunu da etkileyebilir.'},
+ {keys:/enzo/,name:'Enzo St. John',season:5,short:'Enzo, Augustine deneyleriyle bağlantılı bir vampir ve Damon’ın eski arkadaşıdır.',more:'Bonnie ile ilişkisi dizinin son dönemlerindeki duygusal hikâyelerden biridir.'},
+ {keys:/alaric/,name:'Alaric Saltzman',season:1,short:'Alaric, tarih öğretmeni ve vampir avcısı olarak tanıtılır; zamanla Elena ve Jeremy için aileden biri olur.',more:'Isobel, Jenna ve Jo ile ilişkileri; Gemini ikizleriyle bağlantısı önemli.'},
+ {keys:/jeremy/,name:'Jeremy Gilbert',season:1,short:'Jeremy, Elena’nın küçük kardeşi. Doğaüstü olaylarla ve avcı mirasıyla iç içe geçer.',more:'Bonnie ve Anna ile ilişkileri, Beşli avcılar hikâyesiyle bağlantısı var.'},
+ {keys:/matt/,name:'Matt Donovan',season:1,short:'Matt, Mystic Falls’taki çoğu arkadaşının aksine insan kalmaya çalışan karakterlerden biridir.',more:'Kasabanın doğaüstü tehlikelerine karşı giderek daha şüpheci olur.'},
+ {keys:/tyler/,name:'Tyler Lockwood',season:1,short:'Tyler, Lockwood ailesinden gelir; kurt adam laneti ve daha sonra hibrit olması onun hikâyesini değiştirir.',more:'Caroline’la ilişkisi ve Klaus’un hibritleri üzerindeki kontrolü önemli.'},
+ {keys:/kai/,name:'Kai Parker',season:6,short:'Kai Parker, Gemini Coven’dan bir siphoner; başka cadıların büyüsünü emebilir.',more:'1994 hapishane dünyası, Bonnie ile çatışması ve Gemini birleşme ritüeli altıncı sezonun önemli parçaları.'},
+ {keys:/silas/,name:'Silas',season:4,short:'Silas, çok eski bir ölümsüzdür; Stefan’la olan yüz benzerliği doppelgänger mitolojisine bağlanır.',more:'Qetsiyah, Amara ve ölümsüzlük iksiri hikâyesiyle bağlantılı.'},
+ {keys:/qetsiyah|tessa/,name:'Qetsiyah (Tessa)',season:5,short:'Qetsiyah, ölümsüzlük büyüsü ve Öteki Taraf’ın yaratılışıyla ilişkili güçlü bir cadıdır.',more:'Silas ve Amara’yla geçmişi doppelgänger mitolojisini derinleştirir.'},
+ {keys:/amara/,name:'Amara',season:5,short:'Amara, Silas’ın aşkı ve Elena/Katherine doppelgänger çizgisinin çok eski bir yüzüdür.',more:'Öteki Taraf’ın Anchor sistemiyle ilişkisi var.'},
+ {keys:/lexi/,name:'Lexi Branson',season:1,short:'Lexi, Stefan’ın en yakın dostlarından biri; ona insanlığını ve kontrolünü hatırlatır.',more:'Stefan’ın Ripper tarafıyla baş etmesinde önemli rol oynar.'},
+ {keys:/liz forbes|liz/,name:'Şerif Liz Forbes',season:1,short:'Liz, Mystic Falls şerifi ve Caroline’ın annesi. Kızıyla ilişkisi dizinin en dokunaklı bağlarından.',more:'Kasabadaki doğaüstü sırlarla zamanla yüzleşir.'},
+ {keys:/lily/,name:'Lily Salvatore',season:6,short:'Lily, Damon ve Stefan’ın annesi. Salvatore ailesinin geçmişi ve Heretics grubuyla bağlantılıdır.',more:'Heretics, hem vampir hem siphoner özellikleri taşıyan bir gruptur.'},
+ {keys:/jo laughlin|^jo\b/,name:'Jo Laughlin',season:6,short:'Jo, Alaric’in sevgilisi ve Gemini Coven ile bağlantılı bir doktordur.',more:'Kai ve Gemini ailesiyle geçmişi altıncı sezonun kritik parçalarından.'},
+ {keys:/nadia/,name:'Nadia Petrova',season:5,short:'Nadia, Katherine Pierce’ın kızıdır; annesini arayışı onu Mystic Falls’a getirir.',more:'Katherine’in insan tarafını gösteren önemli bağlardan biridir.'}
+ ],
+ concepts:[
+ {keys:/doppelganger|ikiz ruh|neden benziyor|ayni yuz|tipatip/,season:2,answer:'Doppelgänger, doğaüstü olarak aynı yüze sahip farklı kişilerdir. Elena ve Katherine, Petrova/Amara çizgisiyle; Stefan ve Silas da başka bir çizgiyle ilişkilidir. Bu benzerlik sıradan akrabalıkla açıklanmıyor.'},
+ {keys:/original|orijinal|ilk vampir|mikaelson ailesi/,season:2,answer:'Original vampirler, Esther Mikaelson’ın büyüsüyle yaratılan ilk vampir ailesidir. Klaus, Elijah, Rebekah, Kol ve Finn bu aileden. Normal vampirlerden daha güçlüdürler; özel öldürülme koşulları vardır.'},
+ {keys:/hibrit|hybrid|kurt adam/,season:2,answer:'Hibrit, vampir ve kurt adam özelliklerini birlikte taşıyan varlık. Klaus doğuştan kurt adam soyuna sahip bir Original’dır; lanetinin çözülmesi ve Elena’nın kanı hibrit hikâyesinde önemlidir.'},
+ {keys:/ripper|kasap/,season:1,answer:'Ripper, Stefan’ın insan kanına karşı kontrolünü kaybettiği, çok tehlikeli hâline verilen ad. Bu yüzden Stefan çoğu zaman hayvan kanıyla beslenmeye çalışır.'},
+ {keys:/vervain|mine cicegi|verbena/,season:1,answer:'Vervain (mine çiçeği), vampirlerin hipnoz etkisine karşı koruma sağlar ve vampirlere temas ettiğinde zarar verebilir.'},
+ {keys:/compulsion|hipnoz|zihin kontrol/,season:1,answer:'Compulsion, vampirlerin insanların zihnini etkileyip emir verebilmesi veya anılarını değiştirebilmesidir. Vervain bu etkiye karşı korur.'},
+ {keys:/humanity|insanligini kapat|duygularini kapat/,season:1,answer:'Vampirler “insanlık düğmesini kapatınca” suçluluk ve empati gibi duygularını bastırır. Ama bu, yaptıklarının sonuçlarını ortadan kaldırmaz.'},
+ {keys:/cure|tedavi|insan olma/,season:4,answer:'The Cure, vampirliği ortadan kaldırıp kişiyi yeniden insan yapabilen tedavidir. Dördüncü sezondan itibaren hikâyenin büyük hedeflerinden olur.'},
+ {keys:/other side|oteki taraf|diger taraf/,season:4,answer:'Öteki Taraf, doğaüstü varlıkların ruhlarıyla bağlantılı büyülü bir düzlemdir. Bonnie ve Qetsiyah’ın hikâyelerinde önemli bir yer tutar.'},
+ {keys:/gemini|merge|birlesme ritueli/,season:6,answer:'Gemini Coven, ikizlerin “Merge” ritüeliyle liderlik için birleştiği cadı topluluğudur. Kai, Jo, Liv ve Luke bu hikâyede önemli.'},
+ {keys:/prison world|hapishane dunya|1994/,season:6,answer:'1994 hapishane dünyası, Gemini büyüsüyle oluşturulmuş tekrarlanan bir günün yaşandığı alternatif dünyadır. Bonnie, Damon ve Kai’nin hikâyesinde önemli.'},
+ {keys:/heretic|siphoner|buyu em/,season:6,answer:'Siphoner, büyüyü başka kaynaklardan emerek kullanan cadıdır. Heretics ise vampir olup siphoner yeteneğini koruyan kişilerdir.'},
+ {keys:/kurucu aile|founders council/,season:1,answer:'Mystic Falls’un kurucu aileleri ve Founders Council, kasabanın vampir geçmişini bilen ve bunu gizlice kontrol etmeye çalışan insanlardan oluşur.'},
+ {keys:/salvatore kardes|iki kardes/,season:1,answer:'Stefan ve Damon Salvatore, 1864’te vampir olan iki kardeş. Katherine’le geçmişleri ve Elena’ya duydukları hisler aralarındaki çatışmanın temelinde.'}
+ ],
+ seasons:[
+ '1. sezon: Elena’nın Salvatore kardeşlerle tanışması, Mystic Falls’un vampir sırları ve Katherine’in gölgesi.',
+ '2. sezon: Katherine’in dönüşü, kurt adamlar, Elijah ve Klaus’un ortaya çıkışı; doppelgänger ritüeli.',
+ '3. sezon: Original ailesi, Stefan’ın Ripper dönemi ve Klaus’un Mystic Falls üzerindeki etkisi.',
+ '4. sezon: Elena’nın vampirlikle mücadelesi, Beşli avcılar, Silas ve The Cure arayışı.',
+ '5. sezon: Üniversite dönemi, Augustine, Travelers, Silas ve Öteki Taraf’ın değişimi.',
+ '6. sezon: Kai Parker, Gemini Coven, 1994 hapishane dünyası ve Bonnie’nin mücadelesi.',
+ '7. sezon: Heretics, Lily Salvatore, Phoenix Stone ve kardeşlerin geçmişi.',
+ '8. sezon: Sirenler, Cade, son hesaplaşmalar ve Salvatore kardeşlerin hikâyesinin kapanışı.'
+ ]
+};
+function tvdReply(t,raw){
+ const mentioned=TVD.aliases.test(t)||S.topic==='tvd';
+ if(!mentioned)return null;
+ if(/spoiler istemiyorum|spoiler verme|spoilersiz|spoiler olmasin/.test(t)){S.facts.tvdSpoiler=false;return 'Tamam, spoiler vermeyeceğim. 😊 Hangi sezondasın? Ona göre konuşalım.'}
+ if(/spoiler serbest|spoiler verebilirsin|hepsini izledim|bitirdim diziyi/.test(t)){S.facts.tvdSpoiler=true;return 'Anlaştık, spoiler serbest. 😄 En çok hangi karakteri konuşmak istersin?'}
+ const sm=t.match(/(?:sezon|season)\s*([1-8])|([1-8])\s*(?:inci|uncu|nci|ncu|sezon)/);
+ if(sm){const n=Number(sm[1]||sm[2]);S.facts.tvdSeason=n;S.topic='tvd';return TVD.seasons[n-1]+' İstersen karakterleri ve olayları daha ayrıntılı konuşabiliriz.'}
+ if(/hangi sezondayim|kacinci sezondayim/.test(t))return S.facts.tvdSeason?`${S.facts.tvdSeason}. sezonda olduğunu söylemiştin. 😊`:'Henüz hangi sezonda olduğunu söylemedin. Kaçıncı sezondasın?';
+ if(/kac sezon|kac bolum|ne zaman bitti/.test(t))return 'The Vampire Diaries 8 sezon, 171 bölüm sürdü; 2009’da başladı ve 2017’de sona erdi. 🧛';
+ if(/konusu ne|ne anlatiyor|nasil bir dizi|dizi hakkinda/.test(t))return 'The Vampire Diaries, Mystic Falls’ta geçen doğaüstü bir drama: Elena Gilbert, Stefan ve Damon Salvatore, cadılar, kurt adamlar ve Original vampirler... Aşk kadar aile, kayıp ve fedakârlık da önemli.';
+ if(/kimler var|karakterler|oyuncular/.test(t))return 'Başlıca karakterler: Elena, Damon, Stefan, Bonnie, Caroline, Jeremy, Alaric, Matt ve Tyler. Sonra Katherine, Klaus, Elijah, Rebekah, Enzo ve Kai gibi isimler hikâyeyi büyütüyor. Hangisini merak ettin?';
+ if(/damon mu stefan mi|stefan mi damon mu|stelena|delena/.test(t))return 'Damon–Elena ilişkisi daha tutkulu ve kaotik, Stefan–Elena ilişkisi ise ilk büyük aşk ve güven temasıyla öne çıkıyor. Ben taraf tutmayayım 😄 Sen hangisini daha çok seviyorsun?';
+ if(/klaus.*caroline|caroline.*klaus|klaroline/.test(t))return 'Klaus ile Caroline arasındaki çekim, birbirine çok zıt iki karakterin kimyası üzerine kurulu. Klaus’un Caroline’a gösterdiği yumuşak taraf hayranların “Klaroline” demesinin nedeni. 🌹';
+ if(/bonnie.*enzo|enzo.*bonnie|bonenzo/.test(t))return spoilerGate(5,'Bonnie ve Enzo’nun ilişkisi dizinin son dönemlerinde gelişiyor. Bonnie’nin yaşadığı onca kayıptan sonra Enzo’yla kurduğu bağ çok önemli.');
+ if(/final|sonunda ne oluyor|nasil bitiyor/.test(t))return spoilerGate(8,'Finalde Stefan, Mystic Falls’u kurtarmak için kendini feda eder. Damon insan hayatına döner; Elena uyanır ve Damon’la bir hayat yaşar. Bonnie de kendi yolunu seçer. 💔');
+ for(const c of TVD.concepts)if(c.keys.test(t))return spoilerGate(c.season,c.answer);
+ for(const c of TVD.entries)if(c.keys.test(t))return spoilerGate(c.season,c.short+((S.facts.tvdSpoiler===true||/detay|daha fazla|gecmis|hikaye/.test(t))?' '+c.more:''));
+ if(/vampire diaries|vampir gunlukleri|vampire daires|wampire daires|tvd/.test(t)){S.topic='tvd';return 'The Vampire Diaries konuşalım! 🧛 Damon, Stefan, Elena, Katherine, Klaus, Bonnie, Caroline... Karakterleri, ilişkileri ve sezon olaylarını biliyorum. Hangi sezondasın? Spoiler vermeyeyim.'}
+ if(S.topic==='tvd')return 'TVD’de hangi karakteri ya da olayı kastediyorsun? Adını söylersen doğrudan onu konuşabiliriz. 🧛';
+ return null;
+}
+function spoilerGate(season,answer){const known=S.facts.tvdSeason;if(S.facts.tvdSpoiler!==true&&known&&season>known)return `Bu konu ${season}. sezonla ilgili olabilir. ${known}. sezonda olduğunu söylemiştin; spoiler vermeyeyim. İstersen “spoiler serbest” yaz. 😊`;return answer}
+
+
+// ESSE 5: lightweight offline language understanding. All knowledge is bundled locally.
+const DIST=(a,b)=>{if(Math.abs(a.length-b.length)>3)return 9;let row=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let next=[i];for(let j=1;j<=b.length;j++)next[j]=Math.min(next[j-1]+1,row[j]+1,row[j-1]+(a[i-1]===b[j-1]?0:1));row=next}return row[b.length]};
+const COMMON=['iyiyim','iyiyom','iyidir','nasilsin','selam','merhaba','gunaydin','tesekkur','yorgunum','yoruldum','uzgunum','mutluyum','sikildim','naber','evet','hayir','tamam','olur','dizi','film','muzik','sarki','yemek','bugun','yarin','dun','neden','nasil','kim','nerede','hangi','anlat','acikla','bilgi','vampire','diaries','damon','stefan','elena','katherine','klaus','bonnie','caroline','erdem','sena','guzel','kotu','is','okul','limon','gul','kirmizi','dogum','gunu','saat','tarih','oyun','kitap','kahve','cay','uyku','gece','iyi','sen','bende','ben','bir','sey','soyle','biliyor','musun'];
+function smartNorm(raw){let t=norm(raw).replace(/\b(wampire|vampayr|vampir) (daires|dayris|diarys|diaries)\b/g,'vampire diaries').replace(/\b(iyiyim|iyiyom|iyiyum|iyiyo|iyiyö)\b/g,'iyiyim').replace(/\b(napiyon|napion|napıyorsun|napıyosun)\b/g,'ne yapiyorsun').replace(/\b(nasilsin|nasilsin)\b/g,'nasilsin');return t.split(' ').map(w=>{if(w.length<4||/^[0-9]+$/.test(w)||COMMON.includes(w))return w;let best=w,score=3;for(const c of COMMON){if(Math.abs(c.length-w.length)>2)continue;let d=DIST(w,c);if(d<score&&(d===1||d===2&&w.length>=7)){score=d;best=c}}return best}).join(' ')}
+const KB=[
+{tags:['dunya','gezegen','gunes sistemi','uzay'],text:'Güneş Sistemi’nde sekiz gezegen var: Merkür, Venüs, Dünya, Mars, Jüpiter, Satürn, Uranüs ve Neptün. Dünya Güneş’in çevresinde yaklaşık 365 günde döner. İstersen gezegenleri tek tek anlatabilirim.'},
+{tags:['ay','ay tutulmasi','dolunay'],text:'Ay, Dünya’nın doğal uydusu. Evreleri Güneş’ten aldığı ışığın bize görünen kısmına bağlı. Dolunayda aydınlık yüzünün neredeyse tamamını görürüz.'},
+{tags:['kara delik','black hole'],text:'Kara delik, kütleçekimi öyle güçlü bir bölgedir ki olay ufkunun içinden ışık bile kaçamaz. Çoğu büyük kütleli yıldızın çökmesiyle oluşabilir.'},
+{tags:['yapay zeka','ai nedir','chatgpt'],text:'Yapay zekâ, örüntülerden öğrenerek sınıflandırma, tahmin veya metin üretimi gibi işler yapan sistemlerin genel adı. Ben ise API kullanmayan, kurallarla çalışan bir sohbet botuyum.'},
+{tags:['internet nedir','internet nasil'],text:'İnternet, birbirine bağlı ağların bütünü. Telefonun ya da bilgisayarın veriyi küçük paketler hâlinde gönderir; sunucular bunlara yanıt verir. Web, internet üzerindeki hizmetlerden sadece biridir.'},
+{tags:['elektrik nedir','voltaj','akim','volt'],text:'Elektrikte gerilim (volt), yükleri hareket ettiren potansiyel farkıdır; akım (amper) yük akışının hızıdır. Direnç (ohm) bu akıma karşı koyar. Basit ilişkileri Ohm kanunu: V = I × R.'},
+{tags:['fotosentez'],text:'Fotosentezde bitkiler ışık enerjisini kullanarak su ve karbondioksitten şeker üretir; oksijen açığa çıkar. Bu süreç yaşamın enerji döngüsünde çok önemlidir.'},
+{tags:['deprem','fay hatti'],text:'Deprem, yer kabuğundaki gerilimin fay boyunca aniden boşalmasıyla oluşur. Depremin tam zamanını güvenilir biçimde önceden söylemek mümkün değildir. Güvenlik için sağlam yapı ve hazırlık önemlidir.'},
+{tags:['oglak','burc ozellikleri'],text:'Astrolojide Oğlak burcu genellikle disiplinli, kararlı ve sorumluluk sahibi olarak anlatılır. Ama burçların kişiliği belirlediğine dair bilimsel kanıt yok. Sen bu tariflere benziyor musun? ♑'},
+{tags:['kirmizi gul','gullerin anlami','gul neyi'],text:'Kırmızı gül genellikle aşkı, tutkuyu ve güçlü sevgiyi simgeler. 🌹 Senin sevdiğin çiçek de kırmızı gül.'},
+{tags:['limon','limon faydasi'],text:'Limon ekşi tadını sitrik asitten alır ve C vitamini içerir. Ama tek başına mucize bir tedavi değildir. 🍋 Sen limonu nasıl seviyorsun?'},
+{tags:['uyku','uyuyamiyorum','uykusuzluk'],text:'Uyku için düzenli saatler, yatmadan önce ekran ve kafeini azaltmak, serin-karanlık bir ortam işe yarayabilir. Uzun süredir uyuyamıyorsan bir sağlık uzmanına danışmak iyi olur.'},
+{tags:['kahve','kafein'],text:'Kahvedeki kafein uyanıklığı artırır; ama geç saatlerde içildiğinde uykuyu zorlaştırabilir. Sen kahveyi sade mi sütlü mü seversin?'},
+{tags:['kitap','roman','okumak'],text:'Kitap konuşmayı severim. Fantastik, romantik, polisiye ve bilimkurgu bambaşka dünyalar açıyor. En son okuduğun ya da okumak istediğin kitap hangisi?'},
+{tags:['muzik turleri','pop muzik','rock muzik'],text:'Pop genelde akılda kalıcı melodilerle, rock gitar ve davul ağırlığıyla, caz ise doğaçlama ve ritmik çeşitlilikle öne çıkar. Hangi tür seni daha çok sarıyor?'},
+{tags:['ask nedir','sevgi nedir'],text:'Bence sevgi, karşındakini gerçekten dinlemek ve küçük ayrıntıları hatırlamakla da ilgili. Herkesin sevgiyi gösterme biçimi farklı olabilir. Senin için en önemlisi ne?'},
+{tags:['mystic falls'],text:'Mystic Falls, The Vampire Diaries’in kurgusal kasabası. Salvatore kardeşler, Gilbert ailesi ve kasabanın kurucu aileleri etrafında gelişen doğaüstü olayların merkezinde.'},
+{tags:['the originals'],text:'The Originals, Klaus, Elijah ve Rebekah Mikaelson’ın New Orleans’taki aile, güç ve sadakat mücadelelerini anlatan The Vampire Diaries yan dizisi. Daha karanlık bir aile dramı havası var.'},
+{tags:['legacies'],text:'Legacies, The Vampire Diaries evreninde Salvatore School’daki genç doğaüstü varlıkları izliyor. Hope Mikaelson önemli karakterlerden biri.'}
+];
+function knowledgeReply(t){let query=/\b(nedir|kimdir|neden|nasil|anlat|acikla|bilgi|hakkinda|ne demek|ozellik|faydasi|soyle)\b/.test(t);let scored=KB.map(k=>({k,score:Math.max(...k.tags.map(tag=>t.includes(tag)?tag.length:0))})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);if(!scored.length)return null;if(!query&&scored[0].score<8)return null;S.topic='knowledge';S.facts.lastKnowledge=scored[0].k.text;return scored[0].k.text}
+function socialReply(t,raw,p){
+ if(/\b(iyiyim|iyidir|fena degil|idare eder)\b/.test(t)&&/\b(sen|sende|ya sen|peki sen)\b/.test(t)){topic('day','dayFollow');return pick('fineback',['Ben de iyiyim, teşekkür ederim. 😊 Bugün nasıl geçti?','Ben de iyiyim, sağ ol! Bugün seni mutlu eden bir şey oldu mu?'])}
+ if(/^(iyi|iyiyim|iyidir|fena degil|idare eder|eh iste)[ !?]*$/.test(t)){topic('day','dayFollow');return pick('fine',['Sevindim. 😊 Günün nasıl geçiyor?','Güzel! Bugün neler yaptın?'])}
+ if(/^(sen|ya sen|peki sen|sende)[ !?]*$/.test(t)){topic('day','dayFollow');return 'Ben de iyiyim, sağ ol. 😊 Ne konuşalım?'}
+ if(/\b(bugun basima|bir sey oldu|ne oldu biliyor musun|sana bir sey anlatacagim)\b/.test(t)){topic('story','storyDetail');return 'Ne oldu? Anlat, merak ettim. 👀'}
+ if(p==='storyDetail'){topic('story','storyFollow');return /kotu|agla|uzul|kavga|sinir|kork/.test(t)?'Üzüldüm bunu duyduğuma. Sonra ne oldu?':'Vay, sonra ne oldu? Anlat bakalım.'}
+ if(p==='storyFollow'){topic('story','');return 'Anladım. Peki sen o anda ne hissettin?'}
+ if(/\b(saka yaptim|dalga geciyorum|saka)\b/.test(t))return 'Ahahah, beni de yakaladın. 😄';
+ if(/\b(anlamadim|ne demek|daha basit|ornek ver)\b/.test(t)&&S.facts.lastKnowledge)return 'Daha basit söyleyeyim: '+S.facts.lastKnowledge+' İstersen hangi kısmın kafanı karıştırdığını söyle.';
+ if(/\b(bilmiyorum|kararsizim)\b/.test(t))return 'Olabilir, hemen karar vermek zorunda değilsin. İstersen birlikte düşünelim.';
+ if(/\b(ozur dilerim|pardon)\b/.test(t))return 'Hiç sorun değil. 😊';
+ if(/\b(sagol|tesekkurler|tesekkur ederim|eyvallah)\b/.test(t))return 'Ne demek! 💗';
+ if(/\b(ne dusunuyorsun|sence nasil|fikrin ne)\b/.test(t))return 'Biraz daha hangi konuda düşündüğümü söyle, sana net bir fikir vereyim. 😊';
+ return null;
+}
+
+
+// ESSE 6: deterministic intent routing, contextual reactions, and an offline encyclopedia.
+// All content is stored in this page; no remote model, tracking or API calls.
+const OFFLINE_TOPICS = [
+['gunes','Güneş, Güneş Sistemi merkezindeki yıldızdır. Işığı Dünya’ya yaklaşık 8 dakika 20 saniyede ulaşır.'],
+['ay','Ay, Dünya’nın doğal uydusudur. Evreleri, Güneş tarafından aydınlatılan kısmının Dünya’dan farklı görünmesiyle oluşur.'],
+['dunya','Dünya, Güneş’in çevresinde dolanan üçüncü gezegendir. Kendi ekseninde dönüşü gece ve gündüzü oluşturur.'],
+['mars','Mars, demir oksitli yüzeyi nedeniyle kızıl görünür. İnce atmosferi ve geçmişte su bulunduğuna ilişkin izleri vardır.'],
+['jupiter','Jüpiter, Güneş Sistemi’nin en büyük gezegenidir; büyük ölçüde hidrojen ve helyumdan oluşur.'],
+['saturn','Satürn, buz ve kaya parçalarından oluşan belirgin halkalarıyla tanınan gaz devidir.'],
+['venus','Venüs, yoğun karbondioksit atmosferi nedeniyle çok güçlü sera etkisine sahip sıcak bir gezegendir.'],
+['merkur','Merkür, Güneş’e en yakın ve Güneş Sistemi’nin en küçük gezegenidir.'],
+['neptun','Neptün, Güneş’e en uzak sekizinci gezegendir; atmosferinde çok güçlü rüzgârlar görülür.'],
+['uranus','Uranüs, dönme ekseni neredeyse yan yatmış bir buz devidir.'],
+['pluton','Plüton, Kuiper Kuşağı’nda yer alan bir cüce gezegendir; 2006’dan beri gezegen sınıfında değildir.'],
+['karadelik','Kara delik, çekim alanı ışığın bile kaçamayacağı kadar güçlü olan uzay bölgesidir. Olay ufku, geri dönüş sınırıdır.'],
+['galaksi','Galaksi; yıldız, gaz, toz ve karanlık maddeyi kütleçekimiyle bir arada tutan dev bir sistemdir. Biz Samanyolu’ndayız.'],
+['samanyolu','Samanyolu, Güneş Sistemi’nin bulunduğu galaksidir. Merkezinde süper kütleli bir kara delik vardır.'],
+['yildiz','Yıldızlar, çekirdeklerinde nükleer füzyonla enerji üreten sıcak gaz/plazma küreleridir.'],
+['isikhizi','Işığın boşluktaki hızı yaklaşık saniyede 300 bin kilometredir.'],
+['yercekimi','Yerçekimi, kütleli cisimlerin birbirini çekmesidir. Dünya’da cisimleri yere doğru hızlandırır.'],
+['deprem','Deprem, yer kabuğundaki ani kırılmaların oluşturduğu sismik dalgalardır. Güvenli yerde çök-kapan-tutun uygulanır.'],
+['volkan','Volkan, yer altındaki erimiş kayaçların ve gazların yüzeye çıkabildiği jeolojik yapıdır.'],
+['tsunami','Tsunami, çoğunlukla deniz tabanındaki büyük depremlerle oluşan uzun dalga dizisidir. Kıyıda tehlikeli olabilir.'],
+['bulut','Bulutlar, havadaki su buharının küçük su damlacıklarına veya buz kristallerine dönüşmesiyle oluşur.'],
+['yagmur','Yağmur, bulut damlacıklarının büyüyüp yerçekimi etkisiyle yeryüzüne düşmesidir.'],
+['kar','Kar, atmosferdeki su buharının buz kristalleri oluşturması ve bunların yere düşmesidir.'],
+['gokkusagi','Gökkuşağı, güneş ışığının yağmur damlalarında kırılması, yansıması ve renklerine ayrılmasıyla görünür.'],
+['fotosentez','Fotosentez, bitkilerin ışık enerjisini kullanarak su ve karbondioksitten şeker üretmesidir; oksijen de açığa çıkar.'],
+['hucre','Hücre, canlıların temel yapısal ve işlevsel birimidir. Bazı canlılar tek hücrelidir.'],
+['dna','DNA, canlılarda kalıtsal bilgiyi taşıyan moleküldür. Dört temel bazın dizilişi genetik bilgiyi kodlar.'],
+['gen','Gen, DNA üzerinde belirli bir işlevsel ürünün oluşumuna katkıda bulunan bilgi bölgesidir.'],
+['beyin','Beyin, sinir sistemi içinde algı, hareket, bellek ve karar verme gibi işlevleri yöneten organdır.'],
+['kalp','Kalp, kanı akciğerlere ve vücuda pompalayan kaslı organdır.'],
+['akciger','Akciğerlerde oksijen kana geçer, karbondioksit ise solukla dışarı atılır.'],
+['uyku','Uyku, öğrenme, bellek ve bedensel toparlanma için önemlidir. Yetişkinlerin çoğuna gecede 7–9 saat önerilir.'],
+['ruya','Rüyalar, uykuda ortaya çıkan zihinsel deneyimlerdir. Özellikle REM uykusunda canlı olabilirler.'],
+['stres','Stres, zorlayıcı durumlara verilen bedensel ve zihinsel tepkidir. Dinlenme, hareket ve destek almak yardımcı olabilir.'],
+['anksiyete','Kaygı bazen normaldir; uzun sürüp yaşamı etkiliyorsa bir uzmandan destek almak faydalı olabilir.'],
+['vitamin','Vitaminler, vücudun küçük miktarlarda ihtiyaç duyduğu organik besin öğeleridir. Her birinin farklı işlevi vardır.'],
+['protein','Proteinler aminoasitlerden oluşur; kas, enzim ve birçok hücresel yapı için gereklidir.'],
+['karbonhidrat','Karbonhidratlar vücudun başlıca enerji kaynaklarından biridir; lif içeren türleri de önemlidir.'],
+['kahve','Kahve kafein içerir; uyanıklığı artırabilir ama geç saatlerde içildiğinde uykuyu etkileyebilir.'],
+['limon','Limon, ekşi tadını büyük ölçüde sitrik asitten alır ve C vitamini içerir. Sena’nın limonu sevdiğini biliyorum. 🍋'],
+['gul','Gül, Rosaceae familyasından bir çiçektir. Kırmızı gül sıklıkla sevgiyle ilişkilendirilir. 🌹'],
+['oglak','Oğlak, astrolojide 22 Aralık civarı başlayan burçtur. Astrolojik kişilik yorumları bilimsel olarak doğrulanmış değildir.'],
+['ask','Aşk, yakınlık, bağlanma ve yoğun duyguları içerebilen karmaşık bir deneyimdir; herkes farklı yaşayabilir.'],
+['arkadaslik','Arkadaşlıkta güven, karşılıklı ilgi, saygı ve zor zamanlarda yanında olma önemlidir.'],
+['empati','Empati, başka birinin yaşadıklarını ve duygularını onun bakış açısından anlamaya çalışmaktır.'],
+['internet','İnternet, cihazların ortak iletişim protokolleriyle veri alışverişi yaptığı küresel ağlar ağıdır.'],
+['wifi','Wi-Fi, cihazların yerel ağa radyo dalgaları üzerinden kablosuz bağlanmasını sağlar.'],
+['bluetooth','Bluetooth, yakın mesafedeki cihazlar arasında kablosuz veri alışverişi sağlayan teknolojidir.'],
+['yapayzeka','Yapay zekâ, örüntü tanıma, tahmin veya dil işleme gibi görevleri yerine getiren bilgisayar sistemlerini kapsar. Ben ise çevrimdışı kurallı bir botum.'],
+['algoritma','Algoritma, bir problemi çözmek için tanımlanan sonlu ve sıralı adımlar bütünüdür.'],
+['javascript','JavaScript, web sayfalarına etkileşim kazandıran programlama dilidir. ESSE’nin sohbet kuralları da JavaScript ile çalışıyor.'],
+['html','HTML, web sayfasının yapısını tanımlar; başlık, metin, düğme gibi öğeleri oluşturur.'],
+['css','CSS, web sayfasının görünümünü; renk, yazı tipi, yerleşim ve animasyonlarını düzenler.'],
+['github','GitHub, yazılım projelerini Git ile sürümleyip paylaşmaya yarayan platformdur. GitHub Pages statik siteleri yayınlayabilir.'],
+['elektrik','Elektrik akımı, elektrik yüklerinin hareketidir. Akım amper, gerilim volt, direnç ohm ile ifade edilir.'],
+['gerilim','Gerilim, iki nokta arasındaki elektriksel potansiyel farkıdır; birimi volttur.'],
+['akim','Elektrik akımı, birim zamanda geçen elektrik yüküdür; birimi amperdir.'],
+['direnc','Direnç, elektrik akımına karşı gösterilen zorluktur; birimi ohmdur.'],
+['guc','Elektriksel güç, enerjinin aktarılma hızıdır; birimi wattır. Basit DC devrede P = V × I.'],
+['enerji','Enerji, iş yapabilme kapasitesidir. Elektrik tüketiminde kilovatsaat (kWh) yaygın kullanılır.'],
+['pil','Pil, kimyasal enerjiyi elektrik enerjisine dönüştürür. Şarj edilebilir pillerde süreç tersine çevrilebilir.'],
+['motor','Elektrik motoru, elektrik enerjisini mekanik harekete dönüştürür.'],
+['robot','Robot, çevresinden bilgi alıp programlanmış biçimde fiziksel eylemler gerçekleştirebilen sistemdir.'],
+['tarih','Tarih, geçmişteki insan topluluklarını ve olaylarını kaynaklar üzerinden inceleyen disiplindir.'],
+['osmanli','Osmanlı Devleti, 13. yüzyıl sonlarında ortaya çıkmış, 20. yüzyıl başlarında sona ermiş çok uluslu bir devletti.'],
+['ataturk','Mustafa Kemal Atatürk, Türkiye Cumhuriyeti’nin kurucusu ve ilk cumhurbaşkanıdır.'],
+['cumhuriyet','Türkiye Cumhuriyeti 29 Ekim 1923’te ilan edildi.'],
+['istanbul','İstanbul, Boğaz’ın iki yakasında Avrupa ve Asya kıtalarına yayılan Türkiye’nin en kalabalık şehridir.'],
+['ankara','Ankara, Türkiye’nin başkentidir; 13 Ekim 1923’te başkent ilan edildi.'],
+['izmir','İzmir, Türkiye’nin Ege kıyısındaki büyük liman kentlerinden biridir.'],
+['paris','Paris, Fransa’nın başkentidir; Seine Nehri ve Eyfel Kulesi ile tanınır.'],
+['londra','Londra, Birleşik Krallık’ın başkentidir; Thames Nehri kıyısındadır.'],
+['roma','Roma, İtalya’nın başkentidir ve Antik Roma mirasıyla tanınır.'],
+['tokyo','Tokyo, Japonya’nın başkentidir ve dünyanın en büyük metropol alanlarından birinin merkezidir.'],
+['pizza','Pizza, kökeni İtalya’ya dayanan, hamur üzerine sos ve çeşitli malzemeler konularak pişirilen yemektir.'],
+['makarna','Makarna, çoğunlukla durum buğdayından yapılan ve farklı soslarla servis edilen yiyecektir.'],
+['cikolata','Çikolata, kakao ürünlerinden yapılır; türüne göre kakao, şeker ve süt oranı değişir.'],
+['muzik','Müzik; ritim, melodi, armoni ve ses gibi öğelerle oluşturulan sanatsal ifade biçimidir.'],
+['kitap','Kitaplar bilgi, kurgu ve farklı bakış açıları sunar. Bir tür söylersen birlikte kitap konuşabiliriz.'],
+['sinema','Sinema, hareketli görüntülerle hikâye anlatma sanatıdır. Film türleri arasında dram, komedi, korku ve bilim kurgu bulunur.'],
+['vampir','Vampir, çeşitli folklor ve kurgu eserlerinde kanla beslenen doğaüstü varlık olarak tasvir edilir. TVD’de özel kuralları vardır.'],
+['kurtadam','Kurt adam, folklor ve fantastik kurguda insandan kurda dönüşebilen varlıktır. TVD evreninde dönüşüm lanetle bağlantılıdır.'],
+['cadilik','Cadılık, tarih ve folklorda büyü uygulamalarıyla ilişkilendirilen kavramdır; TVD’de cadılar doğanın dengesini gözetir.'],
+['theoriginals','The Originals, Mikaelson ailesine odaklanan The Vampire Diaries yan dizisidir; New Orleans’ta geçer.'],
+['legacies','Legacies, Salvatore School öğrencilerine odaklanan The Originals ve The Vampire Diaries devam evreni dizisidir.'],
+['delena','Delena, Damon ve Elena ilişkisinin hayranlar arasındaki adıdır; ilişki dizinin önemli çatışmalarındandır.'],
+['stelena','Stelena, Stefan ve Elena ilişkisinin hayranlar arasındaki adıdır; dizinin başlangıcında merkezde yer alır.'],
+['klaroline','Klaroline, Klaus ve Caroline arasındaki çekimi anlatan hayran adlandırmasıdır.'],
+['bonenzo','Bonenzo, Bonnie Bennett ve Enzo St. John ilişkisine verilen hayran adıdır.']
+];
+const TOPIC_ALIASES={isikhizi:['isik hizi'],yercekimi:['yer cekimi','kutle cekimi'],karadelik:['kara delik'],samanyolu:['samanyolu galaksisi'],gokkusagi:['gok kusagi'],akciger:['akcigerler'],yapayzeka:['yapay zeka','ai'],javascript:['java script','js'],github:['git hub'],theoriginals:['the originals','originals'],legacies:['legacies'],bonenzo:['bonnie enzo'],oglak:['oglak burcu'],cumhuriyet:['cumhuriyet bayrami'],ataturk:['mustafa kemal'],direnc:['ohm'],gerilim:['volt'],akim:['amper']};
+function topicLookup(t){
+ const q=t.replace(/\b(bana|biraz|lutfen|acaba|nedir|ne demek|kimdir|hakkinda|anlat|anlatir misin|bilgi ver|acikla|neden|nasil|kim|ne|hangi|soyle|merak ettim)\b/g,' ').replace(/\s+/g,' ').trim();
+ if(q.length<2)return null;
+ const hits=[];
+ for(const [key,body] of OFFLINE_TOPICS){
+  const aliases=[key,...(TOPIC_ALIASES[key]||[])];
+  for(const a of aliases){if(new RegExp('(^| )'+a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'( |$)').test(q)){hits.push({key,body,score:a.length});break}}
+ }
+ hits.sort((a,b)=>b.score-a.score);
+ return hits[0]||null;
+}
+function expandedKnowledge(t){
+ const explicit=/\b(nedir|kimdir|ne demek|hakkinda|anlat|acikla|bilgi ver|neden|nasil|kim|ne ise yarar|ozellikleri)\b/.test(t);
+ if(!explicit)return null;
+ const hit=topicLookup(t);
+ if(!hit)return null;
+ S.topic='knowledge';S.facts.lastKnowledge=hit.body;S.facts.lastKnowledgeTopic=hit.key;
+ return hit.body;
+}
+function naturalReply(t){
+ const simple=t.replace(/[!?]+/g,'').trim();
+ const rules=[
+ [/^(bugun gunlerden ne|bugun hangi gun|gunlerden ne|bugun ayin kaci|bugun tarih ne|tarih ne|bugun ne gun)$/,()=>clock(t)],
+ [/^(ne konusalim|ne hakkinda konusalim|konusacak konu bul|konu bul)$/,()=> 'İstersen gününü konuşuruz, istersen TVD karakterlerini tartışırız. Ya da aklına takılan bir şeyi sor. 😊'],
+ [/^(evet konusalim|hadi konusalim|konusalim|sohbet edelim)$/,()=> 'Olur! 😊 Bugün nasıl geçti, anlatmak ister misin?'],
+ [/^(ne hakkinda|hangi konuda|ne konusunda)$/,()=> 'Günlük şeylerden, dizilerden, müzikten ya da merak ettiğin herhangi bir konudan konuşabiliriz.'],
+ [/^(mutlu oldum|cok mutlu oldum|sevindim|cok sevindim)$/,()=> 'Buna sevindim! 💗 Güzel bir şey yaşamak iyi geliyor.'],
+ [/^(guzel bir surprizdi|surpriz cok guzeldi|surprizi begendim)$/,()=> 'Beğenmene çok sevindim! 🌹'],
+ [/^(niye ayni seyleri soyluyorsun|neden hep ayni seyleri soyluyorsun|surekli ayni sey|tekrar ediyorsun)$/,()=> 'Haklısın, aynı yere dönmüşüm. 😅 Yeni bir konu açalım; ne merak ediyorsun?'],
+ [/^(bugun ne yaptin|neler yaptin|gunun nasil gecti)$/,()=> 'Benim günüm seninle sohbet ederek geçiyor. 😊 Senin günün nasıl geçti?'],
+ [/^(iyiyim sen|iyiyom sen|iyi sen|iyidir sen|ben iyiyim sen|iyiyim ya sen)$/,()=> 'Ben de iyiyim, teşekkür ederim. 😊 Bugün nasıl geçti?'],
+ [/^(sen kimsin|kimsin sen)$/,()=> 'Ben ESSE. Bu sayfada çalışan, Sena için hazırlanmış küçük bir sohbet arkadaşıyım. 😊'],
+ [/^(bir sey sorabilir miyim|soru sorabilir miyim|sana bir sey sorcam)$/,()=> 'Tabii ki, sor bakalım. 😊'],
+ [/^(bir sey anlatcam|sana bir sey anlatacagim|bir sey oldu)$/,()=> {topic('story','storyDetail');return 'Anlat, dinliyorum. Ne oldu?'}],
+ [/^(cok guzel|harika|super|mukemmel|bayildim)$/,()=> 'Sevmene sevindim! 😄'],
+ [/^(bilmiyorum|bilmem|emin degilim)$/,()=> 'Olabilir, hemen karar vermek zorunda değilsin. İstersen başka açıdan bakalım.'],
+ [/^(neden|niye|nasil yani)$/,()=> S.facts.lastKnowledge?'Hangi kısmı merak ettin? Bir örnekle açıklamayı deneyebilirim.':'Neyi kastettiğini söylersen daha net cevap verebilirim.'],
+ [/^(hmm|hmmm|he|hee|anladim|aynen)$/,()=> 'Aynen. 😊 İstersen devam edelim.'],
+ [/^(seni seviyorum|seviyorum seni)$/,()=> 'Ne tatlı söyledin. 💗 Ben bir sohbet botuyum ama güzel sözleri karşılıksız bırakmam.'],
+ [/^(iyi geceler|uykum geldi|uyuyacagim)$/,()=> 'İyi geceler Sena. Güzel rüyalar! 🌙'],
+ [/^(nasilsin|nasilsin bakalim|naber|ne haber)$/,()=> 'İyiyim, teşekkür ederim! 😊 Sen nasılsın?']
+ ];
+ for(const [re,fn] of rules)if(re.test(simple))return fn();
+ if(/\b(kac gun kaldi|dogum gunume ne kadar)\b/.test(t))return birthday();
+ if(/\b(ne zaman dogdum|dogum gunum ne zaman)\b/.test(t))return '24 Aralık. 🎂';
+ if(/\b(ayni seyleri|tekrar ediyorsun|alakasiz cevap|sacmalama)\b/.test(t))return 'Haklısın, alakasız bir cevap verdim. Özür dilerim. İstersen sorunu yeniden sor. 💗';
+ if(/\b(cok uzuldum|kalbim kirildi|moralim bozuldu|aglamak istiyorum)\b/.test(t))return 'Bunu yaşaman üzücü. 💗 Anlatmak istersen dinlerim; istemezsen de sorun değil.';
+ if(/\b(cok yoruldum|mahvoldum|bitkinim)\b/.test(t)){topic('tired','tiredReason');return 'Çok yorulmuşsun. Bugün seni en çok ne yordu?'}
+ return null;
+}
+
+// First-pass conversational intent router. Run before the legacy rules so a
+// simple everyday sentence cannot be swallowed by an unrelated topic handler.
+function coreIntent(raw){
+ const t=norm(raw).replace(/[!?]+/g,'').trim();
+ const words=t.split(/\s+/).filter(Boolean);
+ const close=(a,b,n=2)=>Math.abs(a.length-b.length)<=n&&DIST(a,b)<=n;
+ const good=words.some(w=>['iyiyim','iyiyom','iyiyum','iyiyo','iyiyoe','iyiyö','iyiiim','iyiy','iyidir','iyi'].some(x=>close(w,x,w.length>=5?2:1)));
+ const back=words.includes('sen')||words.includes('sende')||/ya sen|peki sen|sen nasilsin/.test(t);
+ if(/\b(niye|neden|neden hep|niye hep)\b.*\b(ayni|tekrar|sacma|alakasiz)/.test(t)||/\b(ayni seyleri|tekrar ediyorsun|anlamiyorsun|ne alaka|sacma cevap|robot gibi)\b/.test(t)){
+   S.pending='';return 'Haklısın, cevaplarım tekrara düşmüş. Kusura bakma 😅 Söylediğin şeyi dikkate alarak devam edelim.';
+ }
+ if(/\b(bugun|yarin|dun)\b.*\b(gunlerden|hangi gun|ne gun|ayin kaci|tarih)/.test(t)||/^(gunlerden ne|ayin kaci|tarih ne|hangi gun)$/.test(t))return clock(t);
+ if(/\b(saat kac|saat kactir|su an saat)\b/.test(t))return clock('saat kac');
+ if(/\b(mutlu oldum|sevindim|beni mutlu etti|cok mutluyum|mutluyum)\b/.test(t)){S.pending='';return 'Ne güzel! 😊 Seni mutlu eden bir şey olması sevindirdi.';}
+ if(/\b(surpriz|surprizi|hediye)\b/.test(t)&&/\b(guzel|begendim|harika|sevdim|tatli)\b/.test(t)){S.pending='';return 'Sürprizi beğenmene sevindim! 🌹';}
+ if((good&&words.length<=5)||/^(fena degil|idare eder)( sen)?$/.test(t)){
+   S.pending='';S.topic='day';return back?'Ben de iyiyim, teşekkür ederim 😊 Bugün nasıl geçti?':'İyi olmana sevindim 😊 Günün nasıl geçti?';
+ }
+ if(/^(sen nasilsin|peki sen nasilsin|ya sen nasilsin|sen iyi misin|sen naber)$/.test(t)){
+   S.pending='';return 'Ben de iyiyim, teşekkür ederim 😊 Bugün neler yaptın?';
+ }
+ if(/^(evet |olur |hadi )?konusalim$|^sohbet edelim$/.test(t)){S.pending='';return 'Olur 😊 İstersen gününden, bir diziden ya da aklına gelen bir şeyden konuşabiliriz.';}
+ if(/^(ne hakkinda|ne konusunda|hangi konuda|ne konusalim)$/.test(t)){S.pending='';return 'İstersen The Vampire Diaries konuşuruz, istersen gününden bahsedersin. Sen seç 😊';}
+ if(/^(evet|olur|tamam|aynen|peki)$/.test(t)&&S.pending==='choice'){S.pending='';return 'Harika 😊 Dizi mi, mini oyun mu, günlük sohbet mi?';}
+ return null;
+}
+function respond(raw){let t=smartNorm(raw),p=S.pending;S.turn++;
+const first=coreIntent(raw);if(first!==null)return first;
+S.pending='';
+// High-priority intents: recognize questions before generic social or pending handlers.
+const natural=naturalReply(t);if(natural!==null)return natural;
+if(/(bugun|yarin|dun).*(gunlerden ne|hangi gun|gun ne|gunlerden hangisi|ayin kaci|tarih)|gunlerden ne|bugun ne gun|hangi tarihteyiz|bugun tarih|tarih bugun|kacinci gun/.test(t)) {S.topic='date';return clock(t)}
+if(/(saat (kac|ne)|kac saat|su an saat)/.test(t)) {S.topic='date';return clock('saat kac')}
+if(/^(evet|olur|tabii|tamam|konusalim|evet konusalim|hadi konusalim|olur konusalim|aynen|peki|neden olmasin)[ !?]*$/.test(t)){
+ if(/baska bir seyden konus|konu degistir/.test(S.lastBot)){S.topic='chat';return 'Olur 😊 İstersen bugün neler yaptığından konuşalım, ya da aklında başka bir konu varsa onu aç.'}
+ if(p==='choice'){S.topic='chat';return 'Tamam 😊 Dizi mi, günlük hayat mı, yoksa biraz eğlenceli sorular mı?'}
+ if(p==='sadDetail'||p==='stressDetail')return 'Anlatmak istersen dinliyorum. 💗';
+ return pick('agreement',['Olur 😊 Ne konuşmak istersin?','Tamamdır 😄 Aklında ne var?','Harika, anlat bakalım.']);
+}
+if(/^(ne hakkinda|ne konusunda|neyi|ne konusalim|hangi konuda)[ !?]*$/.test(t))return 'Gününden, sevdiğin dizilerden ya da aklına gelen herhangi bir şeyden konuşabiliriz. Hangisi hoşuna gider?';
+if(/(anlamadin|anlamiyorsun|sacmaliyor|sacma cevap|niye ayni|neden ayni|ne alaka)/.test(t)){S.pending='';return 'Haklısın, önceki cevabım alakasızdı. Özür dilerim. İstersen sorunu tekrar yanıtlayayım.'}
+if(/^(iyi(yim|yom|yo|dir)?|fena degil|idare eder)( sen| ya sen| peki sen| sen nasilsin)?[ !?]*$/.test(t)){
+ S.topic='day';S.pending='';return /sen/.test(t)?pick('goodback',['Ben de iyiyim, teşekkür ederim 😊 Günün nasıl geçiyor?','Ben de iyiyim, sağ ol! Bugün neler yaptın?']):'İyi olmana sevindim 😊 Bugün nasıl geçti?';
+}
+if(/(mutlu oldum|cok sevindim|guzel bir surprizdi|surpriz guzeldi)/.test(t)){S.topic='happy';return 'Ne güzel! 😊 Bunu duymak sevindirdi.'}
+// Priority conversational repair: understand reactions before topic/fallback handlers.
+const prevUser=[...S.history].reverse().find(m=>m.who==='user' && m.text!==raw);
+const lastBot=[...S.history].reverse().find(m=>m.who==='bot');
+const recentText=(prevUser?.text||'').toLocaleLowerCase('tr-TR');
+const isCriticism=/(ayni sey|tekrar|tekrarl|sacma|alakasiz|anlamiyorsun|anlamadin|robot gibi|bot gibi|surekli soru|niye boyle|neden boyle|duzgun cevap|beni dinle|yanlis cevap)/.test(t);
+if(isCriticism){S.pending='';S.topic='day';return pick('repair',[ 'Haklısın, konuyu kaçırdım ve aynı şeyleri tekrarladım. Özür dilerim. İstersen kaldığımız yerden devam edelim. 💗', 'Doğru diyorsun, biraz otomatik cevap verdim. Bu sefer söylediklerine odaklanacağım. 😊', 'Evet, o cevabım alakasızdı. Kusura bakma. Başka bir konuya geçebiliriz ya da anlattığın yerden devam edebiliriz.' ]);}
+if(/(mutlu oldum|cok sevindim|sevindim|beni mutlu etti|hosuma gitti|bayildim|begendim|cok guzeldi|guzel bir surprizdi|guzel surprizdi)/.test(t)){
+ S.topic='happy';S.pending='';
+ if(/surpriz/.test(t)||/surpriz/.test(smartNorm(recentText)))return pick('surpriseHappy',['Aaa, sürprizi beğenmene çok sevindim! 🥹❤️','Ne güzel, seni mutlu etmesine sevindim. 🌹','O zaman sürpriz amacına ulaşmış demek. 😄']);
+ return pick('happyReact',['Buna sevindim! 😊','Ne güzel, mutluluğun bana da geçti. 💗','Harika! Böyle güzel anlar çoğalsın. 🌹']);
+}
+if(/(uzuldum|kirildim|agladim|moralim bozuldu)/.test(t)){S.topic='sad';S.pending='';return pick('sadReact',['Üzüldüm Sena. İstersen ne olduğunu anlatabilirsin, dinliyorum. 💗','Bu pek hoş olmamış. Konuşmak istersen buradayım.']);}
+if(/(surpriz|hediye)/.test(t)&&/(guzel|harika|tatli|hos|begendim)/.test(t)){S.pending='';return 'Beğenmene çok sevindim! ❤️';}
+if(/^(neden|niye) (ayni|hep ayni)/.test(t)){S.pending='';return 'Haklısın, tekrara düştüm. Kusura bakma. 😅';}
+// Short Turkish replies, common typing mistakes and reciprocal questions.
+const words=t.split(' ').filter(Boolean);
+const goodWord=w=>/^(iyi|iyiyim|iyiyim|iyiyo|iyiyo|iyiyö|iyiyö|iyiyom|iyidir|iyiyiz|iyii|iyiy|iyiyimdir|guzel|guzelim|fena degil|super|harika)$/.test(w)||/^iyi[yio]{1,4}m?$/.test(w);
+const asksBack=/(^| )(sen|peki sen|ya sen|sende|senin|siz|sen nasilsin)( |$|\?)/.test(t);
+const goodReply=/^(iyiyim|iyiy im|iyiyom|iyiyimdir|iyidir|iyi|iyiyiz|guzel|guzelim|super|harikayim|fena degil|idare ederim|iyiyo|iyiyo sen|iyiyom sen|iyiyö sen)( sen| ya sen| peki sen| sende| sen nasilsin)?[ !?]*$/.test(t)||((p==='howday'||p==='dayFollow')&&words.length<=4&&words.some(goodWord));
+if(goodReply){topic('day','dayFollow');return asksBack?pick('goodBack',['Ben de iyiyim, teşekkür ederim Sena. 😊 Günün nasıl geçti?','İyiyim ben de, sağ ol. 💗 Bugün neler yaptın?','Ben de iyiyim. 😊 Bugün güzel bir şey oldu mu?']):pick('goodReply',['İyi olmana sevindim. 😊 Bugün neler yaptın?','Oh, güzel! 💗 Günün nasıl geçti?','Sevindim. Bugün seni gülümseten bir şey oldu mu?']);}
+if(/^(sen nasilsin|peki sen nasilsin|ya sen nasilsin|sen iyi misin|sen nasilsin bakalim|sen ne alemdesin)[ !?]*$/.test(t)){topic('day','dayFollow');return pick('backHow',['Ben de iyiyim, sağ ol Sena. 😊 Bugün neler yaptın?','İyiyim ben de, teşekkür ederim. 💗 Senin günün nasıl geçti?']);}
+if(/^(kotuyum|iyi degilim|pek iyi degilim|berbatim|hic iyi degilim)( sen| ya sen)?[ !?]*$/.test(t)){topic('sad','sadDetail');return 'Üzüldüm Sena. 💗 Canını sıkan bir şey mi oldu, anlatmak ister misin?';}
+if(/^(eh iste|idare eder|soyle boyle|fena degil)( sen| ya sen)?[ !?]*$/.test(t)){topic('day','dayFollow');return 'Anladım, biraz ortalama bir gün gibi. 😊 Bir şey mi yordu seni?';}
+
+// Opt-out always takes precedence; never force the reveal.
+if(has(t,/^(dur|sus|bitir|konusmak istemiyorum|beni rahat birak|istemiyorum|rahatsiz oldum|korktum|korkuyorum|engelle)$/)||has(t,/beni rahatsiz etme|mesaj atma|sohbeti bitir/)){S.closed=true;return 'Tabii, burada bitirelim. Rahatsız ettiysem özür dilerim. 💗'}
+if(has(t,/^(sifirla|bastan basla|sohbeti temizle)$/)){return {reset:true}}
+if(has(t,/^((surprizi|surprizini|sirri|finali) (ac|goster|soyle)|kim hazirladi|erdem oldugunu acikla|artik acikla)$/)){return {reveal:true}}
+if(has(t,/bugun (ayin kaci|hangi gun|tarih ne)|tarih kac|tarih ne|saat kac|saat kactir|yarin hangi gun|dun hangi gun|hangi yildayiz/))return clock(t);
+if(has(t,/dogum gunume kac|dogum gunum ne zaman|dogum tarihim|24 aralik|kac gun kaldi/))return birthday();
+if(has(t,/burcum ne|hangi burcum|hangi burc|oglak burcu/))return '24 Aralık doğumlu olduğun için Oğlak burcusun. ♑';
+if(has(t,/en sevdigim cicek|hangi cicegi severim|cicegim ne/))return 'En sevdiğin çiçek kırmızı gül. 🌹';
+if(has(t,/en sevdigim renk|hangi rengi severim|favori rengim/))return 'Kırmızı! ❤️';
+if(has(t,/limon/))return pick('lemon',['Limon sevdiğini biliyorum. 🍋 En çok neyle seviyorsun?','Limonu unutmadım. 🍋 Ekşi tatları sevmen hoş bir ayrıntı.']);
+const expanded=expandedKnowledge(t);if(expanded!==null)return expanded;
+const tvd=tvdReply(t,raw);if(tvd!==null)return tvd;
+const social=socialReply(t,raw,p);if(social!==null)return social;
+const known=knowledgeReply(t);if(known!==null)return known;
+if(has(t,/hava nasil|yagmur yagacak|sicaklik kac|son dakika|haberler|dolar kac|euro kac|trafik nasil/))return 'Canlı internete bağlı değilim, o yüzden güncel bilgiyi doğrulayamam. Yanlış bir şey söylemek istemem.';
+if(has(t,/sen gercek misin|insan misin|yapay zeka misin|bot musun|chatgpt misin/))return 'Ben ESSE, bu sayfada çalışan senaryolu bir sohbet botuyum. Gerçek bir insan ya da internete bağlı bir yapay zekâ değilim. Ama sohbet edebiliriz. 😊';
+if(has(t,/erdem (misin|mi|yapti|hazirladi)|bunu erdem mi/))return 'Erdem aklına geldiyse bir sebebi olabilir. 😏 İstersen sırrı açıkça gösterebilirim, istersen sohbet ederiz.';
+if(has(t,/kimsin|kim oldugunu|seni kim yapti|beni taniyor musun/))return pick('who',['Ben ESSE. Sena için hazırlanmış küçük bir sohbet sürpriziyim. 😊','Adım ESSE. Bu sayfanın arkasında küçük bir sürpriz var ama istersen normal sohbet de edebiliriz.']);
+if(has(t,/ipucu|tuyo ver/)){S.hints++;return ['Birisi bu sohbeti özellikle senin için hazırladı. 💌','Seni gülümsetmek isteyen biri var.','Kırmızı gül burada tesadüf değil. 🌹','Daha fazlasını öğrenmek istersen “sürprizi aç” yazabilirsin.'][Math.min(S.hints-1,3)]}
+if(has(t,/^((merhaba|selam|selamlar|gunaydin|iyi aksamlar|hey|sa|naber)[ !?]*)$/)){topic('day','howday');return pick('hi',['Selam Sena! 😊 Günün nasıl gidiyor?','Selam! Bugün neler yapıyorsun?','Hey, hoş geldin. 😊 Nasıl hissediyorsun?'])}
+if(has(t,/nasilsin|ne yapiyorsun|ne haber/)){topic('day','dayFollow');return pick('howare',['Ben iyiyim, teşekkür ederim. 😊 Senin günün nasıl geçiyor?','Keyfim yerinde. 😄 Sen bugün neler yaptın?'])}
+if(has(t,/iyi geceler|gorusuruz|bay bay|hosca kal|uyuyacagim/))return 'İyi geceler Sena. Umarım güzel dinlenirsin. 🌙';
+if(has(t,/tesekkur|sag ol|eyvallah/))return 'Ne demek, her zaman. 💗';
+if(has(t,/ahah|haha|komik|guldum/))return pick('laugh',['Ahahah 😄','Güldürmeyi başarabildiysem ne güzel. 😂']);
+if(has(t,/beni seviyor musun|sevgi nedir|ask nedir/))return 'Sevgi bazen küçük şeyleri hatırlamak bence. Birinin sevdiği çiçeği bilmek gibi. 🌹 Sen ne düşünüyorsun?';
+if(has(t,/sikildim|canim sikiliyor|sikici/)){topic('bored','choice');return 'Can sıkıntısına bir çözüm bulalım. Dizi mi konuşalım, oyun mu oynayalım, yoksa biraz sohbet mi edelim?'}
+if(has(t,/uzgunum|moralim bozuk|agladim|mutsuzum|kotuyum/)){topic('sad','sadDetail');return 'Üzüldüm bunu duyduğuma. İstersen anlat, ne oldu? 💗'}
+if(has(t,/yoruldum|yorgunum|bitkinim|uykusuzum/)){topic('tired','tiredReason');return 'Zor bir gün olmuş gibi. Seni en çok ne yordu?'}
+if(has(t,/sinirliyim|kizginim|stresliyim|bunaldim/)){topic('stress','stressDetail');return 'Canını sıkan bir şey olmuş galiba. İstersen anlat, dinliyorum.'}
+if(has(t,/mutluyum|sevindim|harikayim|cok iyiyim/)){topic('happy','happyDetail');return 'Aaa güzel haber! 😄 Ne oldu, anlat bakalım.'}
+if(has(t,/is yer|iste|mesai|patron|ofis|toplanti|calisiyorum|calistim|is yuzunden/)){topic('work','workDetail');return p==='tiredReason'?'İş yüzünden yorulmuşsun. Bugün en zor kısmı neydi?':'İş nasıl gidiyor? Bugün yoğun mu geçti?'}
+if(has(t,/okul|universite|ders|sinav|odev/)){topic('school','schoolDetail');return 'Okul konusu açıldı. Bir şey mi oldu, nasıl gidiyor?'}
+if(has(t,/dizi|film|netflix|izledim|izliyorum/)){topic('series','seriesName');return 'Dizi-film konuşalım. En son ne izledin?'}
+if(has(t,/muzik|sarki|sanatci|playlist/)){topic('music','musicName');return 'Müzik güzel konu. Son zamanlarda en çok ne dinliyorsun? 🎧'}
+if(has(t,/yemek|pizza|aciktim|kahve|cay|tatli/)){topic('food','foodName');return 'Yeme içme konusu güzel. 😄 Şu an canın en çok ne çekiyor?'}
+if(has(t,/oyun oynayalim|mini oyun|oyun oynayak|oyun oynayalim/)){S.game={kind:'choice',step:0};topic('game','gameChoice');return 'O zaman hızlı seçim oyunu! Deniz mi dağ mı? 🌊⛰️'}
+if(S.game&&S.game.kind==='choice'){if(S.game.step===0){S.game.step=1;return 'Güzel seçim. 😄 Peki gece mi gündüz mü?'}if(S.game.step===1){S.game.step=2;return 'Son soru: Tatlı mı ekşi mi? 🍋'}S.game=null;topic('day','');return 'Seçimlerini sevdim. 😄 İstersen başka bir şey konuşalım.'}
+if(has(t,/benim adim ([a-z]+)/)){S.facts.name=raw.trim().split(/\s+/).slice(-1)[0];return `Memnun oldum ${S.facts.name}. 😊`}
+if(has(t,/en sevdigim (dizi|film|sarki|yemek) (.+)/)){const m=t.match(/en sevdigim (dizi|film|sarki|yemek) (.+)/);S.facts[m[1]]=m[2];return 'Bunu aklımda tutacağım. 😊 Neden özellikle onu seviyorsun?'}
+if(has(t,/benim hakkimda ne biliyorsun|ne biliyorsun benim hakkimda/))return '24 Aralık doğumlu olduğunu, Oğlak burcu olduğunu, kırmızı gülleri ve kırmızıyı sevdiğini, bir de limonu sevdiğini biliyorum. 🌹🍋';
+if(has(t,/ne konusalim|konu ac|bir sey anlat/))return pick('topic',['Bugünün en güzel anı neydi?','İzlediğin bir dizi üzerine konuşalım mı?','Bir günlüğüne istediğin yerde olsan nerede olmak isterdin?']);
+if(has(t,/^(evet|aynen|olur|tamam|tabii|kesinlikle)$/)){if(p==='choice'){topic('bored','');return 'Süper. Hangisini seçiyorsun: dizi, oyun, sohbet?'}if(p==='sadDetail'||p==='stressDetail')return 'İstersen anlat, buradayım.';return 'Tamam. 😊 Biraz daha anlatır mısın?'}
+if(has(t,/^(hayir|yok|istemem|bosver)$/)){topic('day','');return 'Peki, hiç zorlamayalım. İstersen konuyu değiştirebiliriz.'}
+if(p==='tiredReason'){topic('tired','tiredFollow');return has(t,/yogun|cok|zor|is|mesai/)?'Bayağı yorucuymuş. Şimdi biraz dinlenebiliyor musun?':'Anladım. Umarım biraz rahatlama fırsatın olur. Şu an nasılsın?'}
+if(p==='workDetail'){topic('work','workFollow');return 'Anladım. Mesai bitti mi, yoksa hâlâ uğraşıyor musun?'}
+if(p==='sadDetail'||p==='stressDetail'){topic('sad','sadFollow');return 'Kulağa zor geliyor. İstersen biraz daha anlatabilirsin; istemezsen başka bir konuya geçeriz.'}
+if(p==='happyDetail'){topic('happy','');return 'Çok güzel! 😄 Sevincine ortak oldum.'}
+if(p==='seriesName'){S.facts.lastSeries=raw.slice(0,80);topic('series','seriesOpinion');return `“${raw.slice(0,60)}” demiştin. Sence en güzel yanı hikâyesi mi, karakterleri mi?`}
+if(p==='seriesOpinion'){topic('series','');return 'Anladım. Karakterleri güçlü olunca dizi daha çok sarıyor. Favori karakterin var mı?'}
+if(p==='musicName'){S.facts.lastMusic=raw.slice(0,80);topic('music','musicOpinion');return 'Bunu da öğrendim. 🎧 O şarkı sana nasıl hissettiriyor?'}
+if(p==='foodName'){S.facts.lastFood=raw.slice(0,80);topic('food','');return 'Güzelmiş. 😄 Evde mi yemeyi seversin, dışarıda mı?'}
+if(p==='schoolDetail'){topic('school','');return 'Umarım istediğin gibi gider. Bu konuda biraz daha konuşmak ister misin?'}
+if(p==='howday'){topic('day','dayFollow');return has(t,/kotu|berbat|zor|yorucu/)?'Pek iyi geçmemiş anlaşılan. Ne oldu?':'Anladım. Bugün seni en çok ne mutlu etti?'}
+if(p==='choice'){topic('bored','');return 'Olur. Biraz daha söyle, nasıl bir şey istersin?'}
+if(p==='tiredFollow'||p==='workFollow'||p==='sadFollow'||p==='musicOpinion'||p==='dayFollow'){topic(S.topic,'');return pick('follow',[ 'Anladım. İstersen devam edelim, seni dinliyorum.','Peki bu konuda sen ne düşünüyorsun?','İstersen biraz daha anlat, konuyu değiştirmek de serbest. 😊'])}
+S.unknown++;S.pending='';return pick('unknown',['Bunu tam çıkaramadım. Biraz açar mısın?','Şunu biraz farklı söyler misin? Tam anlamak istiyorum.','Sanırım konuyu kaçırdım 😅 Ne demek istediğini anlatır mısın?']);
+}
+async function reveal(){S.revealed=true;save();await say('Peki Sena, artık küçük sırrı göstereyim. 💌');const card=document.createElement('div');card.className='final';const heart=document.createElement('div');heart.className='heart';heart.textContent='🌹';const h=document.createElement('h2');h.textContent='Sürpriz, Sena! ❤️';const para=document.createElement('p');para.textContent='Kırmızı güller, 24 Aralık, biraz limon... 🍋\n\nBu küçük sohbeti seni gülümsetmek için hazırladım.\n\n— Erdem ❤️';const btn=document.createElement('button');btn.className='again';btn.textContent='Baştan başla ↻';btn.onclick=reset;card.append(heart,h,para,btn);area.append(card);area.scrollTop=area.scrollHeight;form.style.display='none'}
+function reset(){S=fresh();try{localStorage.removeItem(KEY)}catch{}location.reload()}
+form.addEventListener('submit',async e=>{e.preventDefault();if(send.disabled||S.closed||S.revealed)return;let v=input.value.trim();if(!v)return;input.value='';add(v,'user');remember('user',v);let result=respond(v);save();if(typeof result==='object'){if(result.reset){reset();return}if(result.reveal){await reveal();return}}await say(result);if(S.closed){form.style.display='none';save()}});
+if(S.history.length){for(const m of S.history)add(m.text,m.who,m.time?new Date(m.time).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}):null);if(S.closed||S.revealed)form.style.display='none';if(S.revealed){const msg=document.createElement('div');msg.className='final';msg.textContent='🌹 Sürpriz açıldı. — Erdem ❤️';area.append(msg)}}else{setTimeout(async()=>{if(!S.history.length)await say('Selam Sena! 😊 Bugün nasılsın?')},650)}
+</script></body></html>
